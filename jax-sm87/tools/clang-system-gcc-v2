@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /home/nvidia/cph_dev/pi05/jax-sm87/tools/clang/bin/clang --target=aarch64-linux-gnu --gcc-toolchain=/usr "$@"

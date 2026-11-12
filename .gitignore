@@ -1,0 +1,23 @@
+# Device-local evidence and generated data
+evidence/
+/cache/
+/envs/
+/weights/
+/tools/bin/
+__pycache__/
+/offline-replay/capture_state
+
+# Upstream build trees and local build outputs
+/jax-sm87/cache/
+/jax-sm87/jax/
+/jax-sm87/wheels/
+/jax-sm87/tools/clang/
+/jax-sm87/tools/cuda/
+/jax-sm87/tools/cudnn/
+/torch-cuda/build-env/
+/torch-cuda/logs/
+/torch-cuda/pip-cache/
+/torch-cuda/source/
+/torch-cuda/tmp/
+/torch-cuda/wheels/
+/offline-replay/reference/droid-panda-33ae6a6.xml
