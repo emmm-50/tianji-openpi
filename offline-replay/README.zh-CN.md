@@ -87,3 +87,19 @@ cd /home/nvidia/cph_dev/pi05
 ```
 
 脚本复算同序映射、固定有符号重排/缩放与单次线性末端重定向。Panda 几何来自 [DROID 33ae6a6 Panda MJCF](https://github.com/droid-dataset/droid/blob/33ae6a67274f36d2e29525b86f23a56616ef43a7/droid/robot_ik/franka/panda.xml) 的运动学节点；本地参考 XML 未带网格和纹理，脚本仅使用关节和法兰变换。新检出需从该固定版本链接下载 `panda.xml`，保存为 `offline-replay/reference/droid-panda-33ae6a6.xml`。天玑侧 FK 还依赖本机的运动学工具和已保存的观测。姿态敏感性及迭代数值对照在 `evidence/fk-comparison-20261112`，不构成实机映射或执行轨迹。
+
+## 离线名义碰撞检查
+
+```bash
+cd /home/nvidia/cph_dev/pi05/offline-replay
+PYTHONPATH=/opt/ros/humble/lib/python3.10/site-packages /usr/bin/python3 check_retarget_collision.py \
+ evidence/retimed-retarget-20261112/trajectory.json --out evidence/NEW_COLLISION --samples-per-segment 40
+```
+
+脚本默认从与 `pi05` 同级的 `tianji-robot-resources/resources/marvin/models/Pro-m6-696/` 加载 URDF 和网格；目录按脚本位置解析，不依赖当前工作目录。可用 `--model-dir /path/to/Pro-m6-696` 指定同一机型的模型目录。当前关节、连杆名称和 mesh URI 仍针对 M6-696，不代表通用机型支持。
+
+右臂位姿包含 URDF 的 `base_to_right_arm` 固定变换，再累计 `Joint1_R` 至 `Joint7_R`；脚本核对该固定关节连接 `base_link` 与 `Joint1_R` 的父节点，不硬编码偏移或旋转。
+
+2026-11-17 使用已保存的 `retimed-retarget-20261112/trajectory.json`、每段 40 等分复算：45 个已检查块、5445 个采样姿态，未报告检查范围内的网格交叉。分别读取旧模型目录和资源仓库，输出除 `source_urdf` 外一致。180 个路点的右臂 7 连杆位姿与 Pinocchio 独立对照，齐次矩阵元素最大绝对差为 `3.22e-15`。
+
+结果仅覆盖 CAD 右臂 Link1–7 与底座的非直接相邻网格离散采样，不证明连续路径或实物无碰撞；不覆盖左臂、腕部、夹爪、外部场景和完整网格包含，也未验证实物配准。轨迹为离线数值产物，未连接机器人或进行运动验收。
