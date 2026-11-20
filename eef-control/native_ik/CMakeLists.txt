@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(native_ik CXX)
+find_package(pinocchio REQUIRED)
+find_package(yaml-cpp REQUIRED)
+add_executable(native_ik main.cpp)
+target_compile_features(native_ik PRIVATE cxx_std_17)
+target_include_directories(native_ik PRIVATE /opt/kernelmind/apex/install/marvin_qp_controller/include)
+target_link_libraries(native_ik PRIVATE /opt/kernelmind/apex/install/marvin_qp_controller/lib/marvin_qp_controller/libqp_controller_core.a pinocchio::pinocchio yaml-cpp -L/home/nvidia/.local/lib/python3.10/site-packages -l:daqp.cpython-310-aarch64-linux-gnu.so /usr/lib/aarch64-linux-gnu/libpython3.10.so)

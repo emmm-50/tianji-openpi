@@ -1,0 +1,65 @@
+joint_damping_weights:
+  Joint1_L: 1.0
+  Joint2_L: 1.0
+  Joint3_L: 1.0
+  Joint4_L: 1.0
+  Joint5_L: 0.3
+  Joint6_L: 0.5
+  Joint7_L: 0.5
+  Joint1_R: 1.0
+  Joint2_R: 1.0
+  Joint3_R: 1.0
+  Joint4_R: 1.0
+  Joint5_R: 0.3
+  Joint6_R: 0.5
+  Joint7_R: 0.5
+tasks:
+- name: left_hand
+  type: relative_frame
+  frame_name: left_tool
+  frame_type: body
+  root_name: base_link
+  root_type: body
+  position_cost: 20.0
+  orientation_cost: 3.0
+  lm_damping: 0.01
+  offset_se3:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- name: right_hand
+  type: relative_frame
+  frame_name: right_tool
+  frame_type: body
+  root_name: base_link
+  root_type: body
+  position_cost: 20.0
+  orientation_cost: 3.0
+  lm_damping: 0.01
+  offset_se3:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- name: left_elbow
+  type: frame
+  frame_name: Link4_L
+  frame_type: body
+  position_cost: 0.0
+  orientation_cost: 1.0
+  lm_damping: 0.01
+  offset_se3:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
