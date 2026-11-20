@@ -13,6 +13,8 @@
 using nlohmann::json;
 using marvin_qp_controller::QpControllerCore;
 
+extern const double native_ik_collision_detection_distance = 0.15;
+
 std::vector<double> numbers(const json& value, std::size_t count) {
   if (!value.is_array() || value.size()!=count) throw std::runtime_error("wrong array length");
   std::vector<double> result;
@@ -30,11 +32,12 @@ int main(int argc, char** argv) {
   try {
     QpControllerCore::Options o;
     o.package_path="/opt/kernelmind/apex/install/marvin_qp_controller/share/marvin_qp_controller";
-    o.scene_file="/opt/kernelmind/apex/install/marvin_description/share/marvin_description/mjcf/matrix/m6s_696.xml";
+    o.scene_file=NATIVE_IK_SCENE_FILE;
     o.ik_tasks_file=argv[1];
     o.collision_pairs_file="m6s_696/collision_pairs.json";
     o.velocity_limits_file="m6s_696/velocity_limits.json";
     o.dt=.002; o.posture_cost=0.;
+    o.collision_detection_distance=native_ik_collision_detection_distance;
     QpControllerCore core(o); const auto& model=core.model(); pinocchio::Data data(model);
     const auto frame=model.getFrameId("right_tool");
     if(model.nq!=14 || frame>=model.nframes) throw std::runtime_error("unexpected robot model");
@@ -44,6 +47,7 @@ int main(int argc, char** argv) {
       try {
         const auto req=json::parse(line); const auto type=req.at("type").get<std::string>();
         if(type=="init") {
+          initialized=false;
           auto q=numbers(req.at("q"),14);
           for(int i=0;i<14;i++) if(q[i]<model.lowerPositionLimit[i] || q[i]>model.upperPositionLimit[i]) throw std::runtime_error("initial joint outside model limits");
           if(!core.sync_configuration_from_positions(q)) throw std::runtime_error("initial configuration rejected");

@@ -7,6 +7,7 @@ import math
 import pathlib
 import sys
 import threading
+import time
 import types
 
 HOST = pathlib.Path("/opt/kernelmind/apex/install/vlahost/lib/python3.10/site-packages/vlahost/server.py")
@@ -55,9 +56,12 @@ def load_host():
 
 
 class Publisher:
-    def __init__(self):
+    def __init__(self, on_publish=None):
         self.messages = []
+        self.on_publish = on_publish
     def publish(self, message):
+        if self.on_publish is not None:
+            self.on_publish(time.monotonic_ns())
         self.messages.append(message)
 
 
@@ -78,20 +82,23 @@ async def call_asgi(host, payload):
     return sent
 
 
-def run_action(payload):
-    host = load_host()
+def run_action(payload, *, host=None, loop=None, on_right_publish=None):
+    host = load_host() if host is None else host
     node = host.VlaHostNode.__new__(host.VlaHostNode)
     node._action_lock = threading.Lock()
     node._control_mode = "joint"
     node.eef_mode_enabled = True
     node.intervention_status = lambda: {"active": False, "transitioning": False}
     node.get_clock = lambda: types.SimpleNamespace(now=lambda: types.SimpleNamespace(to_msg=lambda: "fake_stamp"))
-    node.joint_cmd_pub_L, node.joint_cmd_pub_R = Publisher(), Publisher()
+    node.joint_cmd_pub_L, node.joint_cmd_pub_R = Publisher(), Publisher(on_right_publish)
+    node.eef_ik_request_pub = Publisher()
     node.gripper_controller_pub_L, node.gripper_controller_pub_R = Publisher(), Publisher()
     host.vla_node = node
-    events = asyncio.run(call_asgi(host, payload))
+    call = call_asgi(host, payload)
+    events = asyncio.run(call) if loop is None else loop.run_until_complete(call)
     return {"accepted": any(e["type"] == "websocket.accept" for e in events),
             "ack": [json.loads(e["text"]) for e in events if e["type"] == "websocket.send"],
+            "ik_requests": len(node.eef_ik_request_pub.messages),
             "joint_left": [m.positions for m in node.joint_cmd_pub_L.messages],
             "joint_right": [m.positions for m in node.joint_cmd_pub_R.messages],
             "gripper_left": [m.data for m in node.gripper_controller_pub_L.messages],

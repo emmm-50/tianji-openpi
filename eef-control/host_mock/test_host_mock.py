@@ -10,7 +10,7 @@ before = {name: sys.modules.get(name) for name in module_names}
 q = [0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7]
 valid = run_action({"control_mode": "joint", "jointcmd_right": q, "gripper_right": 0.25})
 assert valid == {"accepted": True, "ack": [{"success": True, "control_mode": "joint"}],
-                 "joint_left": [], "joint_right": [q], "gripper_left": [], "gripper_right": [0.25]}
+                 "ik_requests": 0, "joint_left": [], "joint_right": [q], "gripper_left": [], "gripper_right": [0.25]}
 invalid = []
 for payload in ({"jointcmd_right": q[:6], "gripper_right": 0.25},
                 {"jointcmd_right": q[:6] + [float("nan")], "gripper_right": 0.25},

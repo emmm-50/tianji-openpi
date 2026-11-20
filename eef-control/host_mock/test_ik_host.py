@@ -1,41 +1,105 @@
 #!/usr/bin/env python3
-"""Run a fixed offline IK fixture through the installed Host handler with fake pubs."""
+"""Recorded feedback and FK -> native IK -> installed Host, offline only."""
 import json
-import subprocess
+import pathlib
 import sys
-from host_mock import action_from_ik, run_action
 
-binary, config = sys.argv[1:3]
-q = [0, -0.1, 0, -0.1, 0, 0, 0, -1.845240831375122, -0.8560925722122192,
-     1.5991649627685547, -1.8537635803222656, 0.7187421917915344, 0.10505466908216476, -0.3611849844455719]
-step = {"type": "step", "position": [0.5023625744864375, -0.39660238091171596, 0.8469407004049634],
-        "quaternion_xyzw": [-0.0059703669285189635, 0.07279627724394282, -0.0981977434162663, 0.9924828763893688],
-        "gripper_right": 0.5}
-moved = {**step, "position": [step["position"][0] + 0.001, *step["position"][1:]]}
-invalid = {**step, "gripper_right": "NaN"}
-huge_quaternion = {**step, "quaternion_xyzw": [1e308, 0, 0, 1e308]}
-input_lines = [{"type": "init", "q": q}, step, moved, invalid, huge_quaternion]
-p = subprocess.run([binary, config], input="".join(json.dumps(x) + "\n" for x in input_lines),
-                   text=True, capture_output=True, check=True)
-responses = [json.loads(line) for line in p.stdout.splitlines()]
-assert len(responses) == 5 and all(r["ok"] for r in responses[:3])
-assert all(r["ok"] is False and "jointcmd_right" not in r for r in responses[3:])
-delta = [a-b for a,b in zip(responses[2]["jointcmd_right"], responses[1]["jointcmd_right"])]
-assert max(map(abs, delta)) > 1e-8
-action = action_from_ik(responses[2])
-capture = run_action(action)
-assert capture["ack"] == [{"success": True, "control_mode": "joint"}]
-assert capture["joint_right"] == [responses[2]["jointcmd_right"]]
-assert capture["gripper_right"] == [0.5] and not capture["joint_left"] and not capture["gripper_left"]
-for response in responses[3:]:
-    try:
-        action_from_ik(response)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("failed IK result reached Host")
-print(json.dumps({"scope": "fake EEF fixture to offline native IK to installed Host ASGI websocket route with fake publishers; no network transport, ROS node or robot", "ik_executable": binary,
-                  "ik_config": config, "inputs": input_lines, "ik_responses": responses,
-                  "target_translation_world_m": [0.001, 0, 0], "joint_delta_from_hold_rad": delta,
-                  "max_abs_joint_delta_from_hold_rad": max(map(abs, delta)), "host_action": action, "host_capture": capture,
-                  "invalid_ik_response_sent_to_host": False}, indent=2, allow_nan=False))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "native_ik/tests"))
+from recorded_fk import recorded_states, urdf_fk
+from ik_adapter import IKAdapter, NativeSolver
+from host_mock import run_action, load_host
+from marvin_msgs.msg import JointcmdArm, Jointfeedback
+from rclpy.serialization import serialize_message, deserialize_message
+
+solver = NativeSolver(*sys.argv[1:3])
+try:
+    states = recorded_states()
+    state, later = states[:2]
+    position, quat = urdf_fk(state["q"])
+    adapter = IKAdapter(solver)
+    snapshot = {"stamp": None, "joint_states": {"positions": state["q"]}}
+    adapter.initialize(snapshot, feedback_source_ns=state["header_stamp_ns"],
+                       feedback_received_ns=state["joint_ns"],
+                       plan_start_ns=state["video_ns"])
+    target = {"position": position, "quaternion_xyzw": quat}
+    def step(pose, end_ns):
+        return adapter.step(pose, observation_id=state["frame"],
+                            observation_time_ns=state["video_ns"], target_time_ns=end_ns)
+
+    start = state["video_ns"]
+    hold = step(target, start + 66_666_667)
+    delta = max(abs(a-b) for a, b in zip(hold["action"]["jointcmd_right"], state["q"][7:]))
+    assert delta < 1e-5, delta
+    assert hold["plan_time_ns"] == start + 66_000_000
+
+    # Treat index 0 as the start of the first 15 Hz interval, index 1 as the next.
+    moved_position, moved_quat = urdf_fk(later["q"])
+    assert max(abs(a-b) for a, b in zip(moved_position, position)) > 1e-5
+    moved = step({"position": moved_position, "quaternion_xyzw": moved_quat},
+                 start + 133_333_334)
+    assert moved["plan_time_ns"] == start + 132_000_000
+    assert max(abs(a-b) for a, b in zip(moved["action"]["jointcmd_right"],
+                                       hold["action"]["jointcmd_right"])) > 1e-8
+    capture = run_action(moved["action"])
+    assert capture["ack"] == [{"success": True, "control_mode": "joint"}]
+    assert capture["joint_right"] == [moved["action"]["jointcmd_right"]]
+    assert capture["ik_requests"] == 0
+    assert not capture["joint_left"] and not capture["gripper_left"]
+    assert not capture["gripper_right"]
+
+    cmd = JointcmdArm()
+    cmd.positions = capture["joint_right"][0]
+    decoded_cmd = deserialize_message(serialize_message(cmd), JointcmdArm)
+    assert list(decoded_cmd.positions) == capture["joint_right"][0]
+    feedback = Jointfeedback()
+    feedback.header.stamp.sec, feedback.header.stamp.nanosec = 42, 100
+    feedback.arm_positions = state["q"][:7] + list(decoded_cmd.positions)
+    feedback = deserialize_message(serialize_message(feedback), Jointfeedback)
+    readback = load_host().VlaHostNode._joint_state_to_dict(None, feedback)
+    source_ns = feedback.header.stamp.sec * 1_000_000_000 + feedback.header.stamp.nanosec
+    received_ns, snapshot_ns = 42_000_000_250, 42_000_000_300
+    adapter.initialize({"stamp": snapshot_ns, "joint_states": readback},
+                       feedback_source_ns=source_ns, feedback_received_ns=received_ns,
+                       plan_start_ns=start)
+    # FK of the decoded simulated feedback is the hold target for the new run.
+    feedback_position, feedback_quat = urdf_fk(readback["positions"])
+    feedback_hold = step({"position": feedback_position, "quaternion_xyzw": feedback_quat},
+                         start + 2_000_000)
+    assert feedback_hold["feedback"] == {"source_ns": source_ns,
+        "received_ns": received_ns, "snapshot_stamp_ns": snapshot_ns}
+    assert max(abs(a-b) for a, b in zip(feedback_hold["action"]["jointcmd_right"],
+                                       readback["positions"][7:])) < 1e-5
+
+    for invalid in ({**target, "gripper_right": "NaN"},
+                    {**target, "quaternion_xyzw": [1e308, 0, 0, 1e308]},
+                    {**target, "quaternion_xyzw": [0, 0, 0, 0]}):
+        adapter.initialize(snapshot, feedback_source_ns=state["header_stamp_ns"],
+                           feedback_received_ns=state["joint_ns"], plan_start_ns=start)
+        try:
+            step(invalid, start + 2_000_000)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid target accepted")
+        try:
+            step(target, start + 2_000_000)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("failed IK left adapter initialized")
+    # Direct JSONL callers also discard a previous seed after a rejected init.
+    assert solver({"type": "init", "q": state["q"]})["ok"]
+    outside_limits = state["q"].copy()
+    outside_limits[1] = 3.0
+    rejected = solver({"type": "init", "q": outside_limits})
+    assert not rejected["ok"] and "jointcmd_right" not in rejected
+    next_step = solver({"type": "step", **target})
+    assert next_step == {"ok": False, "error": "init required"}
+
+    print(json.dumps({"frames": [state["frame"], later["frame"]],
+        "bag_receive_ns": [state["joint_ns"], later["joint_ns"]],
+        "max_hold_delta_rad": delta, "capture": capture,
+        "feedback_association": feedback_hold["feedback"],
+        "invalid_targets_blocked": 3}))
+finally:
+    solver.close()
